@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BCF Classement — Connexion</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <!-- MSAL.js (Microsoft Authentication Library) -->
+  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <style>
+    :root {
+      --bcf-bleu: #1F3A6E; --bcf-bleu-clair: #E9F0FA; --bcf-bleu-bord: #C7D6EE;
+      --bcf-or: #B8893B; --texte: #1c1c1e; --texte-doux: #5b6470; --texte-faible: #8a929d;
+      --fond: #ffffff; --fond-doux: #f4f6f9; --bord: #e2e6ec;
+      --vert-fond: #e8f3e9; --vert-texte: #2f6b3a;
+      --rouge-fond: #fbeaea; --rouge-texte: #a32525;
+      --radius: 10px; --radius-sm: 7px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --texte: #e9ebef; --texte-doux: #aab2bd; --texte-faible: #7c8593;
+        --fond: #1f2024; --fond-doux: #27292e; --bord: #3a3d44;
+        --bcf-bleu-clair: #2a3447; --bcf-bleu-bord: #3c4a63;
+        --vert-fond: #20342a; --vert-texte: #8fce9b;
+        --rouge-fond: #3a2526; --rouge-texte: #e89a9a;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      background: var(--fond); color: var(--texte); font-size: 14px; line-height: 1.45;
+    }
+    header {
+      background: var(--bcf-bleu-clair); border-bottom: 1px solid var(--bcf-bleu-bord);
+      padding: 12px 16px; display: flex; align-items: center; gap: 12px;
+    }
+    .logo-pill { background: #fff; border-radius: 8px; padding: 6px 9px; display: inline-flex; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+    .logo-pill img { height: 34px; display: block; }
+    .header-title { font-size: 13px; font-weight: 600; color: var(--bcf-bleu); }
+    @media (prefers-color-scheme: dark) { .header-title { color: var(--texte); } }
+    .badge {
+      display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: .03em;
+      color: var(--bcf-or); border: 1px solid var(--bcf-or); border-radius: 4px;
+      padding: 1px 6px; margin-left: auto;
+    }
+    section { padding: 16px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; padding: 11px 14px; font-size: 14px; font-weight: 600;
+      border: none; border-radius: var(--radius-sm); cursor: pointer; font-family: inherit;
+      background: var(--bcf-bleu); color: #fff;
+    }
+    .btn:hover { opacity: .92; }
+    .btn:disabled { opacity: .5; cursor: default; }
+    .status-line { font-size: 13px; margin: 12px 0 0; padding: 10px 12px; border-radius: var(--radius-sm); }
+    .status-info { background: var(--fond-doux); color: var(--texte-doux); }
+    .status-ok { background: var(--vert-fond); color: var(--vert-texte); }
+    .status-err { background: var(--rouge-fond); color: var(--rouge-texte); white-space: pre-wrap; word-break: break-word; }
+    .section-label {
+      font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+      color: var(--texte-faible); margin: 18px 0 8px;
+    }
+    .folder-item {
+      display: flex; align-items: center; gap: 9px; padding: 8px 11px; margin-bottom: 5px;
+      border: 1px solid var(--bord); border-radius: var(--radius-sm); font-size: 13px;
+    }
+    .folder-icon { color: var(--bcf-bleu); flex-shrink: 0; }
+    @media (prefers-color-scheme: dark){ .folder-icon { color: #9db8e6; } }
+    .folder-count { margin-left: auto; font-size: 11px; color: var(--texte-faible); }
+    .user-chip { font-size: 12px; color: var(--texte-doux); margin-top: 6px; }
+    .demo-note { font-size: 11px; color: var(--texte-faible); padding: 14px 16px; line-height: 1.5; border-top: 1px solid var(--bord); }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="logo-pill"><img src="assets/logo_bcf_header.png" alt="BCF" /></span>
+    <span class="header-title">Connexion à votre boîte</span>
+    <span class="badge">TEST</span>
+  </header>
+
+  <section>
+    <button class="btn" id="connectBtn">Se connecter et lire mes dossiers</button>
+    <div class="status-line status-info" id="status">Cliquez sur le bouton pour vous connecter à votre compte Microsoft.</div>
+    <div id="user" class="user-chip"></div>
+
+    <div id="foldersWrap" style="display:none;">
+      <p class="section-label">Vos dossiers de messagerie</p>
+      <div id="folders"></div>
+    </div>
+  </section>
+
+  <p class="demo-note">
+    Test de connexion : cette page vérifie l'accès à votre boîte réelle et affiche vos vrais dossiers.
+    Aucune action de classement n'est effectuée ici. Si la liste de vos dossiers apparaît, la connexion fonctionne.
+  </p>
+
+  <script src="auth-test.js"></script>
+</body>
+</html>
