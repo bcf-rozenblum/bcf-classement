@@ -5,13 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>BCF Classement — Connexion</title>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <!-- MSAL.js (Microsoft Authentication Library) — CDN principal + secours -->
-  <script src="https://alcdn.msauth.net/browser/3.28.1/js/msal-browser.min.js"></script>
-  <script>
-    if (typeof msal === "undefined") {
-      document.write('<script src="https://alcdn.msftauth.net/browser/3.28.1/js/msal-browser.min.js"><\/script>');
-    }
-  </script>
+  <!-- MSAL.js hébergé localement (évite tout blocage de CDN externe dans Outlook) -->
+  <script src="msal-browser.min.js"></script>
   <style>
     :root {
       --bcf-bleu: #1F3A6E; --bcf-bleu-clair: #E9F0FA; --bcf-bleu-bord: #C7D6EE;
