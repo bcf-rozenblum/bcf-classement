@@ -6,15 +6,13 @@
   xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
   xsi:type="MailApp">
 
-  <!-- Identifiant unique : à régénérer une fois (voir notice). -->
   <Id>06b298e1-524a-44fe-a6a9-f9e8ffb7b882</Id>
-  <Version>0.1.0</Version>
+  <Version>0.1.1</Version>
   <ProviderName>Bureau comptable et fiscal Jacques Rozenblum</ProviderName>
   <DefaultLocale>fr-FR</DefaultLocale>
   <DisplayName DefaultValue="BCF Classement"/>
   <Description DefaultValue="Classement assisté des e-mails dans des dossiers, à la manière de SimplyFile. Version de démonstration."/>
 
-  <!-- Icônes du complément : remplacer https://bcf-rozenblum.github.io/bcf-classement par votre hébergement -->
   <IconUrl DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-80.png"/>
   <HighResolutionIconUrl DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-80.png"/>
   <SupportUrl DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/"/>
@@ -25,7 +23,7 @@
 
   <Requirements>
     <Sets>
-      <Set Name="Mailbox" MinVersion="1.5"/>
+      <Set Name="Mailbox" MinVersion="1.3"/>
     </Sets>
   </Requirements>
 
@@ -46,59 +44,60 @@
 
   <DisableEntityHighlighting>false</DisableEntityHighlighting>
 
-  <!-- Surcouche moderne : bouton dans le ruban + volet -->
+  <!-- Structure imbriquée : V1_0 vide, tout le fonctionnel dans V1_1 (requis par New Outlook) -->
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
-    <Requirements>
-      <bt:Sets DefaultMinVersion="1.5">
-        <bt:Set Name="Mailbox"/>
-      </bt:Sets>
-    </Requirements>
-    <Hosts>
-      <Host xsi:type="MailHost">
-        <DesktopFormFactor>
-          <FunctionFile resid="functionFile"/>
-          <ExtensionPoint xsi:type="MessageReadCommandSurface">
-            <OfficeTab id="TabDefault">
-              <Group id="bcfGroup">
-                <Label resid="groupLabel"/>
-                <Control xsi:type="Button" id="bcfOpenPane">
-                  <Label resid="paneButtonLabel"/>
-                  <Supertip>
-                    <Title resid="paneButtonLabel"/>
-                    <Description resid="paneButtonTip"/>
-                  </Supertip>
-                  <Icon>
-                    <bt:Image size="16" resid="icon16"/>
-                    <bt:Image size="32" resid="icon32"/>
-                    <bt:Image size="80" resid="icon80"/>
-                  </Icon>
-                  <Action xsi:type="ShowTaskpane">
-                    <SourceLocation resid="taskpaneUrl"/>
-                  </Action>
-                </Control>
-              </Group>
-            </OfficeTab>
-          </ExtensionPoint>
-        </DesktopFormFactor>
-      </Host>
-    </Hosts>
-    <Resources>
-      <bt:Images>
-        <bt:Image id="icon16" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-16.png"/>
-        <bt:Image id="icon32" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-32.png"/>
-        <bt:Image id="icon80" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-80.png"/>
-      </bt:Images>
-      <bt:Urls>
-        <bt:Url id="taskpaneUrl" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/taskpane.html"/>
-        <bt:Url id="functionFile" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/taskpane.html"/>
-      </bt:Urls>
-      <bt:ShortStrings>
-        <bt:String id="groupLabel" DefaultValue="BCF Classement"/>
-        <bt:String id="paneButtonLabel" DefaultValue="Classer"/>
-      </bt:ShortStrings>
-      <bt:LongStrings>
-        <bt:String id="paneButtonTip" DefaultValue="Ouvrir le volet de classement pour ranger ce message dans un dossier."/>
-      </bt:LongStrings>
-    </Resources>
+    <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1" xsi:type="VersionOverridesV1_1">
+      <Requirements>
+        <bt:Sets DefaultMinVersion="1.3">
+          <bt:Set Name="Mailbox"/>
+        </bt:Sets>
+      </Requirements>
+      <Hosts>
+        <Host xsi:type="MailHost">
+          <DesktopFormFactor>
+            <FunctionFile resid="taskpaneUrl"/>
+            <ExtensionPoint xsi:type="MessageReadCommandSurface">
+              <OfficeTab id="TabDefault">
+                <Group id="bcfGroup">
+                  <Label resid="groupLabel"/>
+                  <Control xsi:type="Button" id="bcfOpenPane">
+                    <Label resid="paneButtonLabel"/>
+                    <Supertip>
+                      <Title resid="paneButtonLabel"/>
+                      <Description resid="paneButtonTip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="icon16"/>
+                      <bt:Image size="32" resid="icon32"/>
+                      <bt:Image size="80" resid="icon80"/>
+                    </Icon>
+                    <Action xsi:type="ShowTaskpane">
+                      <SourceLocation resid="taskpaneUrl"/>
+                    </Action>
+                  </Control>
+                </Group>
+              </OfficeTab>
+            </ExtensionPoint>
+          </DesktopFormFactor>
+        </Host>
+      </Hosts>
+      <Resources>
+        <bt:Images>
+          <bt:Image id="icon16" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-16.png"/>
+          <bt:Image id="icon32" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-32.png"/>
+          <bt:Image id="icon80" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-80.png"/>
+        </bt:Images>
+        <bt:Urls>
+          <bt:Url id="taskpaneUrl" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/taskpane.html"/>
+        </bt:Urls>
+        <bt:ShortStrings>
+          <bt:String id="groupLabel" DefaultValue="BCF Classement"/>
+          <bt:String id="paneButtonLabel" DefaultValue="Classer"/>
+        </bt:ShortStrings>
+        <bt:LongStrings>
+          <bt:String id="paneButtonTip" DefaultValue="Ouvrir le volet de classement pour ranger ce message dans un dossier."/>
+        </bt:LongStrings>
+      </Resources>
+    </VersionOverrides>
   </VersionOverrides>
 </OfficeApp>
