@@ -7,11 +7,11 @@
   xsi:type="MailApp">
 
   <Id>06b298e1-524a-44fe-a6a9-f9e8ffb7b882</Id>
-  <Version>0.1.1</Version>
+  <Version>0.2.0</Version>
   <ProviderName>Bureau comptable et fiscal Jacques Rozenblum</ProviderName>
   <DefaultLocale>fr-FR</DefaultLocale>
   <DisplayName DefaultValue="BCF Classement"/>
-  <Description DefaultValue="Classement assisté des e-mails dans des dossiers, à la manière de SimplyFile. Version de démonstration."/>
+  <Description DefaultValue="Classement assisté des e-mails. Test de connexion à la boîte réelle."/>
 
   <IconUrl DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-80.png"/>
   <HighResolutionIconUrl DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-80.png"/>
@@ -30,7 +30,7 @@
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/taskpane.html"/>
+        <SourceLocation DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/folders-test.html"/>
         <RequestedHeight>450</RequestedHeight>
       </DesktopSettings>
     </Form>
@@ -44,7 +44,6 @@
 
   <DisableEntityHighlighting>false</DisableEntityHighlighting>
 
-  <!-- Structure imbriquée : V1_0 vide, tout le fonctionnel dans V1_1 (requis par New Outlook) -->
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
     <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1" xsi:type="VersionOverridesV1_1">
       <Requirements>
@@ -88,7 +87,7 @@
           <bt:Image id="icon80" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/assets/icon-80.png"/>
         </bt:Images>
         <bt:Urls>
-          <bt:Url id="taskpaneUrl" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/taskpane.html"/>
+          <bt:Url id="taskpaneUrl" DefaultValue="https://bcf-rozenblum.github.io/bcf-classement/folders-test.html"/>
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="groupLabel" DefaultValue="BCF Classement"/>
