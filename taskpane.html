@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BCF Classement</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    :root {
+      --bcf-bleu: #1F3A6E;
+      --bcf-bleu-clair: #E9F0FA;
+      --bcf-bleu-bord: #C7D6EE;
+      --bcf-or: #B8893B;
+      --texte: #1c1c1e;
+      --texte-doux: #5b6470;
+      --texte-faible: #8a929d;
+      --fond: #ffffff;
+      --fond-doux: #f4f6f9;
+      --bord: #e2e6ec;
+      --vert-fond: #e8f3e9;
+      --vert-texte: #2f6b3a;
+      --radius: 10px;
+      --radius-sm: 7px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --texte: #e9ebef; --texte-doux: #aab2bd; --texte-faible: #7c8593;
+        --fond: #1f2024; --fond-doux: #27292e; --bord: #3a3d44;
+        --bcf-bleu-clair: #2a3447; --bcf-bleu-bord: #3c4a63;
+        --vert-fond: #20342a; --vert-texte: #8fce9b;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      background: var(--fond); color: var(--texte);
+      font-size: 14px; line-height: 1.45;
+    }
+    .wrap { display: flex; flex-direction: column; min-height: 100vh; }
+
+    /* En-tête avec logo sur pastille blanche */
+    header {
+      background: var(--bcf-bleu-clair);
+      border-bottom: 1px solid var(--bcf-bleu-bord);
+      padding: 12px 16px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .logo-pill {
+      background: #fff; border-radius: 8px; padding: 6px 9px;
+      display: inline-flex; box-shadow: 0 1px 2px rgba(0,0,0,.08);
+    }
+    .logo-pill img { height: 34px; display: block; }
+    .header-title { font-size: 13px; font-weight: 600; color: var(--bcf-bleu); }
+    @media (prefers-color-scheme: dark) { .header-title { color: var(--texte); } }
+
+    /* Bandeau message courant */
+    .message-card {
+      padding: 12px 16px; border-bottom: 1px solid var(--bord);
+      background: var(--fond-doux);
+    }
+    .message-subject { font-weight: 600; font-size: 13.5px; margin: 0 0 3px; }
+    .message-from { font-size: 12px; color: var(--texte-doux); margin: 0; }
+
+    section { padding: 12px 16px; }
+    .section-label {
+      font-size: 11px; font-weight: 600; letter-spacing: .04em;
+      text-transform: uppercase; color: var(--texte-faible);
+      margin: 0 0 8px;
+    }
+
+    /* Lignes de dossier */
+    .folder-btn {
+      width: 100%; display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; background: var(--fond); border: 1px solid var(--bord);
+      border-radius: var(--radius-sm); padding: 9px 11px; margin-bottom: 6px;
+      cursor: pointer; text-align: left; font-size: 13px; color: var(--texte);
+      transition: border-color .12s, background .12s;
+    }
+    .folder-btn:hover { border-color: var(--bcf-bleu); background: var(--bcf-bleu-clair); }
+    .folder-btn:focus-visible { outline: 2px solid var(--bcf-bleu); outline-offset: 1px; }
+    .folder-left { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .folder-icon { color: var(--bcf-bleu); flex-shrink: 0; }
+    @media (prefers-color-scheme: dark){ .folder-icon { color: #9db8e6; } }
+    .folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .score {
+      font-size: 11px; font-weight: 600; color: var(--vert-texte);
+      background: var(--vert-fond); padding: 2px 8px; border-radius: 20px; flex-shrink: 0;
+    }
+    .chevron { color: var(--texte-faible); flex-shrink: 0; }
+
+    /* Recherche */
+    .search-box { position: relative; }
+    .search-box svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--texte-faible); }
+    #search {
+      width: 100%; padding: 9px 11px 9px 34px; font-size: 13px;
+      border: 1px solid var(--bord); border-radius: var(--radius-sm);
+      background: var(--fond); color: var(--texte); font-family: inherit;
+    }
+    #search:focus { outline: none; border-color: var(--bcf-bleu); }
+    #results { margin-top: 8px; }
+    .empty-hint { font-size: 12px; color: var(--texte-faible); padding: 4px 2px; }
+
+    /* Favoris */
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip {
+      font-size: 12px; padding: 5px 11px; border-radius: 20px;
+      border: 1px solid var(--bcf-bleu-bord); background: var(--fond);
+      color: var(--bcf-bleu); cursor: pointer; font-family: inherit;
+    }
+    .chip:hover { background: var(--bcf-bleu-clair); }
+    @media (prefers-color-scheme: dark){ .chip { color: #9db8e6; } }
+
+    /* Barre de statut + undo */
+    .status {
+      margin-top: auto; display: none; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 11px 16px; background: var(--vert-fond);
+      border-top: 1px solid var(--bord);
+    }
+    .status.show { display: flex; }
+    .status-text { font-size: 12.5px; color: var(--vert-texte); }
+    .undo-btn {
+      font-size: 12px; font-weight: 500; padding: 5px 12px;
+      border: 1px solid var(--vert-texte); background: transparent;
+      color: var(--vert-texte); border-radius: var(--radius-sm); cursor: pointer;
+      display: inline-flex; align-items: center; gap: 5px; font-family: inherit; flex-shrink: 0;
+    }
+    .undo-btn:hover { background: rgba(47,107,58,.1); }
+
+    .demo-note {
+      font-size: 11px; color: var(--texte-faible); padding: 10px 16px 16px;
+      line-height: 1.5; border-top: 1px solid var(--bord);
+    }
+    .demo-badge {
+      display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: .03em;
+      color: var(--bcf-or); border: 1px solid var(--bcf-or); border-radius: 4px;
+      padding: 1px 6px; margin-left: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="logo-pill"><img src="assets/logo_bcf_header.png" alt="Bureau comptable et fiscal Jacques Rozenblum" /></span>
+      <span class="header-title">Classer ce message</span>
+      <span class="demo-badge">DÉMO</span>
+    </header>
+
+    <div class="message-card">
+      <p class="message-subject" id="msgSubject">—</p>
+      <p class="message-from" id="msgFrom">—</p>
+    </div>
+
+    <section>
+      <p class="section-label">Dossiers suggérés</p>
+      <div id="suggestions"></div>
+    </section>
+
+    <section style="padding-top:0;">
+      <p class="section-label">Rechercher un dossier</p>
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+        <input id="search" type="text" placeholder="Tapez puis Entrée pour classer…" autocomplete="off" />
+      </div>
+      <div id="results"></div>
+    </section>
+
+    <section style="padding-top:0;">
+      <p class="section-label">Favoris</p>
+      <div class="chips" id="favs"></div>
+    </section>
+
+    <div class="status" id="status">
+      <span class="status-text" id="statusText"></span>
+      <button class="undo-btn" id="undoBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a6 6 0 0 1 0 12h-3"/></svg>
+        Annuler
+      </button>
+    </div>
+
+    <p class="demo-note">
+      Version de démonstration : les dossiers, suggestions et le message affiché sont fictifs.
+      Aucune action ne touche votre boîte mail réelle. Le branchement sur vos vrais dossiers
+      se fera à l'étape suivante, après l'inscription Entra ID.
+    </p>
+  </div>
+
+  <script src="taskpane.js"></script>
+</body>
+</html>
