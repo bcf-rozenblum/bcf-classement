@@ -169,24 +169,28 @@ function readSelectedMessage() {
 
 // ====== Chargement de l'arborescence des dossiers ======
 // On parcourt récursivement avec $expand=childFolders pour limiter les appels.
-// Les dossiers système sont renvoyés par Graph avec un nom anglais interne :
-// on les traduit en français via leur wellKnownName (stable, indépendant de la langue).
+// Les dossiers système sont renvoyés par Graph (v1.0) avec leur nom anglais interne.
+// On les traduit en français en reconnaissant ces noms standards.
 const SYSTEM_FOLDER_FR = {
-  inbox: "Boîte de réception",
-  sentitems: "Éléments envoyés",
-  drafts: "Brouillons",
-  deleteditems: "Éléments supprimés",
-  junkemail: "Courrier indésirable",
-  outbox: "Boîte d'envoi",
-  archive: "Archive",
-  clutter: "Courrier inutile",
-  conversationhistory: "Historique des conversations",
-  scheduled: "Envois programmés"
+  "inbox": "Boîte de réception",
+  "sent items": "Éléments envoyés",
+  "drafts": "Brouillons",
+  "deleted items": "Éléments supprimés",
+  "junk email": "Courrier indésirable",
+  "outbox": "Boîte d'envoi",
+  "archive": "Archive",
+  "clutter": "Courrier inutile",
+  "conversation history": "Historique des conversations",
+  "notes": "Notes",
+  "scheduled": "Envois programmés",
+  "rss feeds": "Flux RSS",
+  "rss subscriptions": "Flux RSS",
+  "sync issues": "Problèmes de synchronisation"
 };
 
 function displayFolderName(f) {
-  const wkn = (f.wellKnownName || "").toLowerCase();
-  if (wkn && SYSTEM_FOLDER_FR[wkn]) return SYSTEM_FOLDER_FR[wkn];
+  const key = (f.displayName || "").trim().toLowerCase();
+  if (SYSTEM_FOLDER_FR[key]) return SYSTEM_FOLDER_FR[key];
   return f.displayName;
 }
 
@@ -201,11 +205,11 @@ async function loadAllFolders() {
       const path = parentPath ? (parentPath + " / " + name) : name;
       result.push({ id: f.id, name: name, path });
       if (f.childFolderCount && f.childFolderCount > 0) {
-        await walk(path, "/me/mailFolders/" + f.id + "/childFolders?$top=200&$select=id,displayName,childFolderCount,isHidden,wellKnownName");
+        await walk(path, "/me/mailFolders/" + f.id + "/childFolders?$top=200&$select=id,displayName,childFolderCount,isHidden");
       }
     }
   }
-  await walk("", "/me/mailFolders?$top=200&$select=id,displayName,childFolderCount,isHidden,wellKnownName");
+  await walk("", "/me/mailFolders?$top=200&$select=id,displayName,childFolderCount,isHidden");
   result.sort((a, b) => a.path.localeCompare(b.path, "fr"));
   return result;
 }
