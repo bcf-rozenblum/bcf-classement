@@ -232,11 +232,32 @@ function shortName(path) { const p = path.split(" / "); return p[p.length - 1]; 
 function makeFolderButton(path, score) {
   const btn = document.createElement("button");
   btn.className = "folder-btn";
+  btn.title = path; // chemin complet au survol
+  const parts = path.split(" / ");
+  const leaf = parts[parts.length - 1];
+  const parent = parts.slice(0, -1).join(" / ");
+
   const left = document.createElement("span");
   left.className = "folder-left";
-  left.innerHTML = folderIcon() + '<span class="folder-name"></span>';
-  left.querySelector(".folder-name").textContent = path;
+  const icon = document.createElement("span");
+  icon.innerHTML = folderIcon();
+  icon.style.flexShrink = "0";
+  const textWrap = document.createElement("span");
+  textWrap.className = "folder-text";
+  if (parent) {
+    const p = document.createElement("span");
+    p.className = "folder-parent";
+    p.textContent = parent + " /";
+    textWrap.appendChild(p);
+  }
+  const n = document.createElement("span");
+  n.className = "folder-leaf";
+  n.textContent = leaf;
+  textWrap.appendChild(n);
+  left.appendChild(icon);
+  left.appendChild(textWrap);
   btn.appendChild(left);
+
   if (typeof score === "number") {
     const s = document.createElement("span"); s.className = "score"; s.textContent = score + "%"; btn.appendChild(s);
   } else {
@@ -319,7 +340,10 @@ async function fileInto(folderPath) {
   try {
     // Mémoriser l'origine pour l'undo
     const fromFolderId = currentMessage.parentFolderId;
-    await graph("POST", "/me/messages/" + currentMessage.restId + "/move", { destinationId: target.id });
+    // L'API move renvoie le message déplacé AVEC son nouvel identifiant (dans le dossier cible).
+    // C'est ce nouvel id qu'il faut conserver pour pouvoir annuler ensuite.
+    const moved = await graph("POST", "/me/messages/" + currentMessage.restId + "/move", { destinationId: target.id });
+    const newMessageId = (moved && moved.id) ? moved.id : currentMessage.restId;
 
     // Apprentissage : incrémente le compteur expéditeur -> dossier
     const sender = (currentMessage.fromAddress || "").toLowerCase();
@@ -334,11 +358,11 @@ async function fileInto(folderPath) {
     learnModel.history = learnModel.history.slice(0, 200);
     saveLearnModel();
 
-    lastAction = { messageRestId: currentMessage.restId, fromFolderId, toFolderName: target.path };
+    lastAction = { messageRestId: newMessageId, fromFolderId, toFolderName: target.path };
     // Empiler dans la pile de session (annulation individuelle possible)
     sessionMoves.unshift({
       id: "m" + Date.now() + Math.random().toString(36).slice(2, 6),
-      messageRestId: currentMessage.restId,
+      messageRestId: newMessageId,
       fromFolderId: fromFolderId,
       subject: currentMessage.subject,
       toFolderName: target.path,
@@ -367,7 +391,8 @@ async function undoMove(moveId) {
   setStatus("Annulation…", "info");
   try {
     const dest = mv.fromFolderId || "inbox";
-    await graph("POST", "/me/messages/" + mv.messageRestId + "/move", { destinationId: dest });
+    const moved = await graph("POST", "/me/messages/" + mv.messageRestId + "/move", { destinationId: dest });
+    if (moved && moved.id) mv.messageRestId = moved.id;
     mv.undone = true;
     renderSessionMoves();
     setStatus("Classement annulé.", "ok");
