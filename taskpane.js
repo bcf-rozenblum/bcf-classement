@@ -22,8 +22,24 @@ let cachedToken = null;
 let allFolders = [];        // [{id, name, path}]
 let currentMessage = null;  // {restId, subject, fromAddress, fromName, conversationId, parentFolderId}
 let lastAction = null;      // conservé pour compat, non utilisé pour l'affichage
-let sessionMoves = [];      // pile de session : [{id, messageRestId, fromFolderId, subject, toFolderName, undone}]
+let sessionMoves = [];      // pile : [{id, messageRestId, fromFolderId, subject, toFolderName, undone, when}]
 let learnModel = { bySender: {}, favorites: [], history: [] };
+
+// --- Persistance de la pile des classements récents ---
+// New Outlook recharge la page du volet à chaque changement de message ;
+// on stocke donc la pile dans sessionStorage pour qu'elle survive aux rechargements
+// et se vide quand le volet (l'onglet) est fermé.
+const SESSION_KEY = "bcfSessionMoves";
+
+function loadSessionMoves() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    sessionMoves = raw ? (JSON.parse(raw) || []) : [];
+  } catch (_) { sessionMoves = []; }
+}
+function saveSessionMoves() {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionMoves.slice(0, 20))); } catch (_) {}
+}
 
 // ====== Démarrage ======
 Office.onReady(() => {
@@ -48,6 +64,7 @@ async function onItemChanged() {
     }
     renderMessage();
     renderSuggestions();
+    loadSessionMoves();
     renderSessionMoves();
     const results = document.getElementById("results");
     const search = document.getElementById("search");
@@ -152,6 +169,27 @@ function readSelectedMessage() {
 
 // ====== Chargement de l'arborescence des dossiers ======
 // On parcourt récursivement avec $expand=childFolders pour limiter les appels.
+// Les dossiers système sont renvoyés par Graph avec un nom anglais interne :
+// on les traduit en français via leur wellKnownName (stable, indépendant de la langue).
+const SYSTEM_FOLDER_FR = {
+  inbox: "Boîte de réception",
+  sentitems: "Éléments envoyés",
+  drafts: "Brouillons",
+  deleteditems: "Éléments supprimés",
+  junkemail: "Courrier indésirable",
+  outbox: "Boîte d'envoi",
+  archive: "Archive",
+  clutter: "Courrier inutile",
+  conversationhistory: "Historique des conversations",
+  scheduled: "Envois programmés"
+};
+
+function displayFolderName(f) {
+  const wkn = (f.wellKnownName || "").toLowerCase();
+  if (wkn && SYSTEM_FOLDER_FR[wkn]) return SYSTEM_FOLDER_FR[wkn];
+  return f.displayName;
+}
+
 async function loadAllFolders() {
   const result = [];
   async function walk(parentPath, fetchUrl) {
@@ -159,14 +197,15 @@ async function loadAllFolders() {
     const items = (data.value || []);
     for (const f of items) {
       if (f.isHidden) continue;
-      const path = parentPath ? (parentPath + " / " + f.displayName) : f.displayName;
-      result.push({ id: f.id, name: f.displayName, path });
+      const name = displayFolderName(f);
+      const path = parentPath ? (parentPath + " / " + name) : name;
+      result.push({ id: f.id, name: name, path });
       if (f.childFolderCount && f.childFolderCount > 0) {
-        await walk(path, "/me/mailFolders/" + f.id + "/childFolders?$top=200&$select=id,displayName,childFolderCount,isHidden");
+        await walk(path, "/me/mailFolders/" + f.id + "/childFolders?$top=200&$select=id,displayName,childFolderCount,isHidden,wellKnownName");
       }
     }
   }
-  await walk("", "/me/mailFolders?$top=200&$select=id,displayName,childFolderCount,isHidden");
+  await walk("", "/me/mailFolders?$top=200&$select=id,displayName,childFolderCount,isHidden,wellKnownName");
   result.sort((a, b) => a.path.localeCompare(b.path, "fr"));
   return result;
 }
@@ -176,6 +215,11 @@ function loadLearnModel() {
   try {
     const raw = Office.context.roamingSettings.get("bcfLearnModel");
     if (raw && typeof raw === "object") learnModel = Object.assign(learnModel, raw);
+  } catch (_) {}
+  // Recharger aussi la liste des classements récents (survit au rechargement de page)
+  try {
+    const sm = Office.context.roamingSettings.get("bcfSessionMoves");
+    if (Array.isArray(sm)) sessionMoves = sm;
   } catch (_) {}
 }
 function saveLearnModel() {
@@ -306,12 +350,16 @@ function renderFavorites() {
   });
 }
 
+function stripAccents(s) {
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 function onSearchInput() {
-  const q = document.getElementById("search").value.trim().toLowerCase();
+  const q = stripAccents(document.getElementById("search").value.trim().toLowerCase());
   const results = document.getElementById("results");
   results.innerHTML = "";
   if (!q) return;
-  const matches = allFolders.filter(f => f.path.toLowerCase().includes(q)).slice(0, 8);
+  const matches = allFolders.filter(f => stripAccents(f.path.toLowerCase()).includes(q)).slice(0, 8);
   if (matches.length === 0) {
     results.innerHTML = '<p class="empty-hint">Aucun dossier ne correspond. Vous pouvez en créer un ci-dessous.</p>';
     return;
@@ -367,9 +415,11 @@ async function fileInto(folderPath) {
       fromFolderId: fromFolderId,
       subject: currentMessage.subject,
       toFolderName: target.path,
-      undone: false
+      undone: false,
+      when: Date.now()
     });
-    sessionMoves = sessionMoves.slice(0, 15);
+    sessionMoves = sessionMoves.slice(0, 20);
+    saveSessionMoves();
     renderSessionMoves();
     setStatus("Classé dans « " + target.path + " ».", "ok");
     setTimeout(() => setStatus("", "info"), 1800);
@@ -395,6 +445,7 @@ async function undoMove(moveId) {
     const moved = await graph("POST", "/me/messages/" + mv.messageRestId + "/move", { destinationId: dest });
     if (moved && moved.id) mv.messageRestId = moved.id;
     mv.undone = true;
+    saveSessionMoves();
     renderSessionMoves();
     setStatus("Classement annulé.", "ok");
     setTimeout(() => setStatus("", "info"), 1600);
@@ -436,6 +487,12 @@ function renderSessionMoves() {
   });
 }
 
+function clearSessionMoves() {
+  sessionMoves = [];
+  saveSessionMoves();
+  renderSessionMoves();
+}
+
 // ====== Création de dossier ======
 async function onCreateFolder() {
   const input = document.getElementById("newFolderName");
@@ -462,6 +519,7 @@ async function start() {
   try {
     await getToken();
     loadLearnModel();
+    loadSessionMoves();
 
     setStatus("Lecture du message…", "info");
     currentMessage = await readSelectedMessage();
