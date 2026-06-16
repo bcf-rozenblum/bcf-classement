@@ -21,15 +21,41 @@ let pca = null;
 let cachedToken = null;
 let allFolders = [];        // [{id, name, path}]
 let currentMessage = null;  // {restId, subject, fromAddress, fromName, conversationId, parentFolderId}
-let lastAction = null;      // {messageRestId, fromFolderId, toFolderName} pour l'undo
+let lastAction = null;      // conservé pour compat, non utilisé pour l'affichage
+let sessionMoves = [];      // pile de session : [{id, messageRestId, fromFolderId, subject, toFolderName, undone}]
 let learnModel = { bySender: {}, favorites: [], history: [] };
 
 // ====== Démarrage ======
 Office.onReady(() => {
   bindUi();
+  // Recharger automatiquement quand l'utilisateur change de message (volet épinglé)
+  try {
+    Office.context.mailbox.addHandlerAsync(Office.EventType.ItemChanged, onItemChanged);
+  } catch (_) {}
   // Lancement automatique : on tente la connexion et le chargement dès l'ouverture
   start();
 });
+
+// Appelé quand le message sélectionné change (si le volet reste ouvert/épinglé)
+async function onItemChanged() {
+  try {
+    currentMessage = await readSelectedMessage();
+    if (currentMessage) {
+      try {
+        const m = await graph("GET", "/me/messages/" + currentMessage.restId + "?$select=parentFolderId");
+        currentMessage.parentFolderId = m.parentFolderId || null;
+      } catch (_) {}
+    }
+    renderMessage();
+    renderSuggestions();
+    const results = document.getElementById("results");
+    const search = document.getElementById("search");
+    if (results) results.innerHTML = "";
+    if (search) search.value = "";
+  } catch (e) {
+    setStatus("Impossible de recharger le message : " + (e.message || e), "err");
+  }
+}
 
 function bindUi() {
   const search = document.getElementById("search");
@@ -42,8 +68,6 @@ function bindUi() {
       }
     });
   }
-  const undo = document.getElementById("undoBtn");
-  if (undo) undo.addEventListener("click", doUndo);
   const retry = document.getElementById("retryBtn");
   if (retry) retry.addEventListener("click", start);
   const createBtn = document.getElementById("createBtn");
@@ -58,15 +82,8 @@ function setStatus(text, kind) {
   el.style.display = text ? "block" : "none";
 }
 
-function showBanner(text) {
-  const b = document.getElementById("banner");
-  const t = document.getElementById("bannerText");
-  if (b && t) { t.textContent = text; b.classList.add("show"); }
-}
-function hideBanner() {
-  const b = document.getElementById("banner");
-  if (b) b.classList.remove("show");
-}
+function showBanner() { /* obsolète : remplacé par la liste des classements récents */ }
+function hideBanner() { /* obsolète */ }
 
 // ====== MSAL / NAA ======
 async function ensureMsal() {
@@ -282,7 +299,20 @@ function onSearchInput() {
 
 // ====== Action : classer (déplacement réel) ======
 async function fileInto(folderPath) {
-  if (!currentMessage) return;
+  // Toujours relire le message réellement sélectionné juste avant d'agir,
+  // pour éviter d'utiliser un identifiant périmé (volet épinglé, changement de message).
+  const fresh = await readSelectedMessage();
+  if (fresh) {
+    if (!currentMessage || fresh.restId !== currentMessage.restId) {
+      currentMessage = fresh;
+      try {
+        const m = await graph("GET", "/me/messages/" + currentMessage.restId + "?$select=parentFolderId");
+        currentMessage.parentFolderId = m.parentFolderId || null;
+      } catch (_) {}
+      renderMessage();
+    }
+  }
+  if (!currentMessage) { setStatus("Aucun message sélectionné.", "err"); return; }
   const target = allFolders.find(f => f.path === folderPath);
   if (!target) { setStatus("Dossier introuvable : " + folderPath, "err"); return; }
   setStatus("Classement en cours…", "info");
@@ -305,8 +335,19 @@ async function fileInto(folderPath) {
     saveLearnModel();
 
     lastAction = { messageRestId: currentMessage.restId, fromFolderId, toFolderName: target.path };
-    showBanner("Classé dans « " + target.path + " »");
-    setStatus("", "info");
+    // Empiler dans la pile de session (annulation individuelle possible)
+    sessionMoves.unshift({
+      id: "m" + Date.now() + Math.random().toString(36).slice(2, 6),
+      messageRestId: currentMessage.restId,
+      fromFolderId: fromFolderId,
+      subject: currentMessage.subject,
+      toFolderName: target.path,
+      undone: false
+    });
+    sessionMoves = sessionMoves.slice(0, 15);
+    renderSessionMoves();
+    setStatus("Classé dans « " + target.path + " ».", "ok");
+    setTimeout(() => setStatus("", "info"), 1800);
   } catch (e) {
     setStatus("Échec du classement : " + (e.message || e), "err");
   }
@@ -319,21 +360,54 @@ function bumpFavorite(path) {
   learnModel.favorites = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(e => e[0]).slice(0, 8);
 }
 
-// ====== Annulation ======
-async function doUndo() {
-  if (!lastAction) return;
+// ====== Annulation d'une entrée précise de la pile ======
+async function undoMove(moveId) {
+  const mv = sessionMoves.find(m => m.id === moveId);
+  if (!mv || mv.undone) return;
   setStatus("Annulation…", "info");
   try {
-    // Redéplacer vers l'origine si connue, sinon vers la boîte de réception
-    const dest = lastAction.fromFolderId || "inbox";
-    await graph("POST", "/me/messages/" + lastAction.messageRestId + "/move", { destinationId: dest });
-    showBanner("Classement annulé.");
-    lastAction = null;
-    setStatus("", "info");
-    setTimeout(hideBanner, 2000);
+    const dest = mv.fromFolderId || "inbox";
+    await graph("POST", "/me/messages/" + mv.messageRestId + "/move", { destinationId: dest });
+    mv.undone = true;
+    renderSessionMoves();
+    setStatus("Classement annulé.", "ok");
+    setTimeout(() => setStatus("", "info"), 1600);
   } catch (e) {
-    setStatus("Échec de l'annulation : " + (e.message || e), "err");
+    setStatus("Impossible d'annuler ce classement (le message a peut-être été déplacé entre-temps) : " + (e.message || e), "err");
   }
+}
+
+// ====== Rendu de la liste des classements récents (session) ======
+function renderSessionMoves() {
+  const wrap = document.getElementById("sessionWrap");
+  const list = document.getElementById("sessionList");
+  if (!wrap || !list) return;
+  const active = sessionMoves;
+  if (active.length === 0) { wrap.style.display = "none"; return; }
+  wrap.style.display = "block";
+  list.innerHTML = "";
+  active.forEach(mv => {
+    const row = document.createElement("div");
+    row.className = "move-row" + (mv.undone ? " move-undone" : "");
+    const info = document.createElement("div");
+    info.className = "move-info";
+    const subj = document.createElement("div");
+    subj.className = "move-subject";
+    subj.textContent = mv.subject || "(sans objet)";
+    const dest = document.createElement("div");
+    dest.className = "move-dest";
+    dest.textContent = (mv.undone ? "annulé · " : "→ ") + mv.toFolderName;
+    info.appendChild(subj); info.appendChild(dest);
+    row.appendChild(info);
+    if (!mv.undone) {
+      const btn = document.createElement("button");
+      btn.className = "move-undo";
+      btn.textContent = "Annuler";
+      btn.addEventListener("click", () => undoMove(mv.id));
+      row.appendChild(btn);
+    }
+    list.appendChild(row);
+  });
 }
 
 // ====== Création de dossier ======
@@ -348,9 +422,7 @@ async function onCreateFolder() {
     allFolders.push({ id: created.id, name: created.displayName, path: created.displayName });
     allFolders.sort((a, b) => a.path.localeCompare(b.path, "fr"));
     input.value = "";
-    setStatus("Dossier « " + name + " » créé.", "ok");
-    // Propose de classer directement dedans
-    showBanner("Dossier « " + name + " » créé. Cliquez pour classer le message dedans : ");
+    setStatus("Dossier « " + name + " » créé. Recherchez-le ci-dessus pour y classer le message.", "ok");
   } catch (e) {
     setStatus("Échec de la création : " + (e.message || e), "err");
   }
@@ -382,6 +454,7 @@ async function start() {
     renderMessage();
     renderSuggestions();
     renderFavorites();
+    renderSessionMoves();
     document.getElementById("mainUi").style.display = "block";
     setStatus(allFolders.length + " dossiers chargés.", "ok");
     setTimeout(() => setStatus("", "info"), 1500);
