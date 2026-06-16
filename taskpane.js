@@ -48,6 +48,7 @@ async function onItemChanged() {
     }
     renderMessage();
     renderSuggestions();
+    renderSessionMoves();
     const results = document.getElementById("results");
     const search = document.getElementById("search");
     if (results) results.innerHTML = "";
