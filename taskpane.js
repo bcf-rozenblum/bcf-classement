@@ -1,199 +1,392 @@
 /*
- * BCF Classement — logique du volet (version DÉMO)
- * ------------------------------------------------------------------
- * La couche "données" (objet DataSource ci-dessous) est volontairement
- * isolée. En version démo, elle renvoie des dossiers et un message
- * fictifs. À l'étape suivante, on remplacera UNIQUEMENT cet objet par
- * des appels à Microsoft Graph — le reste de l'interface ne change pas.
- * ------------------------------------------------------------------
+ * BCF Classement — Volet de classement (VERSION RÉELLE)
+ * ====================================================================
+ * Se connecte à la boîte via MSAL/NAA, lit le message sélectionné,
+ * charge l'arborescence des dossiers, suggère un classement, déplace
+ * réellement le message, permet de créer des dossiers, et d'annuler.
+ *
+ * L'apprentissage (favoris + historique de classement) est stocké dans
+ * la boîte (roamingSettings d'Office), donc synchronisé entre postes.
+ * ====================================================================
  */
 
-/* ====================== COUCHE DONNÉES (DÉMO) ====================== */
-const DataSource = {
-  // Liste complète des dossiers (fictive en démo).
-  listFolders() {
-    return [
-      "Clients / Belvaux SA",
-      "Clients / Martin & Co",
-      "Comptabilité / Factures 2026",
-      "Comptabilité / Notes de frais",
-      "Fournisseurs",
-      "Projets / Migration Outlook",
-      "RH / Contrats",
-      "Archive 2025",
-      "Banque / BNP",
-      "TVA / Déclarations"
-    ];
-  },
+// ====== Configuration Entra ID ======
+const CLIENT_ID = "ea5e7d18-727f-486d-a939-56a2332c3420";
+const TENANT_ID = "fbbe2873-c64f-491c-aa80-7453e77a18c7";
+const GRAPH_SCOPES = ["Mail.ReadWrite", "User.Read"];
+const GRAPH = "https://graph.microsoft.com/v1.0";
 
-  // Dossiers favoris épinglés (fictif en démo).
-  listFavorites() {
-    return ["Comptabilité / Factures 2026", "Clients / Belvaux SA", "Archive 2025"];
-  },
+// ====== État global ======
+let pca = null;
+let cachedToken = null;
+let allFolders = [];        // [{id, name, path}]
+let currentMessage = null;  // {restId, subject, fromAddress, fromName, conversationId, parentFolderId}
+let lastAction = null;      // {messageRestId, fromFolderId, toFolderName} pour l'undo
+let learnModel = { bySender: {}, favorites: [], history: [] };
 
-  // Message actuellement sélectionné. En démo : valeur fixe.
-  // En version réelle : lecture via Office.context.mailbox.item.
-  currentMessage() {
-    return {
-      subject: "Facture Q2 — Société Belvaux SA",
-      from: "comptabilite@belvaux.be"
-    };
-  },
+// ====== Démarrage ======
+Office.onReady(() => {
+  bindUi();
+  // Lancement automatique : on tente la connexion et le chargement dès l'ouverture
+  start();
+});
 
-  // Déplacement d'un message vers un dossier.
-  // En démo : simulation. En réel : POST /messages/{id}/move via Graph.
-  // Renvoie une promesse résolue avec le dossier d'origine (pour l'undo).
-  fileMessage(folderName) {
-    return Promise.resolve({ ok: true, previousFolder: "Boîte de réception" });
-  },
-
-  // Annulation : redéplace vers le dossier d'origine.
-  undoMessage(previousFolder) {
-    return Promise.resolve({ ok: true });
+function bindUi() {
+  const search = document.getElementById("search");
+  if (search) {
+    search.addEventListener("input", onSearchInput);
+    search.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const first = document.querySelector("#results .folder-btn");
+        if (first) first.click();
+      }
+    });
   }
-};
-
-/* ============== MOTEUR DE SUGGESTION (DÉMO simplifié) ============== */
-// En démo : scores fixes plausibles. En réel : calcul à partir de
-// l'historique stocké dans la boîte (expéditeur, domaine, mots-clés…).
-function computeSuggestions(message, folders) {
-  return [
-    { name: "Comptabilité / Factures 2026", score: 94 },
-    { name: "Clients / Belvaux SA", score: 81 },
-    { name: "TVA / Déclarations", score: 63 }
-  ];
+  const undo = document.getElementById("undoBtn");
+  if (undo) undo.addEventListener("click", doUndo);
+  const retry = document.getElementById("retryBtn");
+  if (retry) retry.addEventListener("click", start);
+  const createBtn = document.getElementById("createBtn");
+  if (createBtn) createBtn.addEventListener("click", onCreateFolder);
 }
 
-/* ====================== ÉTAT & UTILITAIRES ======================== */
-let lastAction = null; // { folder, previousFolder } pour l'undo
+function setStatus(text, kind) {
+  const el = document.getElementById("status");
+  if (!el) return;
+  el.textContent = text;
+  el.className = "status-line " + (kind === "ok" ? "status-ok" : kind === "err" ? "status-err" : "status-info");
+  el.style.display = text ? "block" : "none";
+}
 
-function folderIconSvg() {
+function showBanner(text) {
+  const b = document.getElementById("banner");
+  const t = document.getElementById("bannerText");
+  if (b && t) { t.textContent = text; b.classList.add("show"); }
+}
+function hideBanner() {
+  const b = document.getElementById("banner");
+  if (b) b.classList.remove("show");
+}
+
+// ====== MSAL / NAA ======
+async function ensureMsal() {
+  if (pca) return pca;
+  const msalConfig = {
+    auth: {
+      clientId: CLIENT_ID,
+      authority: "https://login.microsoftonline.com/" + TENANT_ID,
+      supportsNestedAppAuth: true
+    },
+    cache: { cacheLocation: "localStorage" }
+  };
+  if (msal.createNestablePublicClientApplication) {
+    pca = await msal.createNestablePublicClientApplication(msalConfig);
+  } else {
+    pca = new msal.PublicClientApplication(msalConfig);
+    if (pca.initialize) await pca.initialize();
+  }
+  return pca;
+}
+
+async function getToken() {
+  if (cachedToken) return cachedToken;
+  await ensureMsal();
+  const request = { scopes: GRAPH_SCOPES };
+  try {
+    const r = await pca.acquireTokenSilent(request);
+    cachedToken = r.accessToken;
+  } catch (e) {
+    const r = await pca.acquireTokenPopup(request);
+    cachedToken = r.accessToken;
+  }
+  return cachedToken;
+}
+
+// ====== Appels Graph ======
+async function graph(method, path, body) {
+  const token = await getToken();
+  const opts = { method, headers: { Authorization: "Bearer " + token } };
+  if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  const resp = await fetch(GRAPH + path, opts);
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error("Graph " + resp.status + " : " + txt.slice(0, 300));
+  }
+  if (resp.status === 204) return null;
+  return resp.json();
+}
+
+// ====== Lecture du message sélectionné ======
+function readSelectedMessage() {
+  return new Promise((resolve) => {
+    const item = Office.context.mailbox.item;
+    if (!item || !item.itemId) { resolve(null); return; }
+    const restId = Office.context.mailbox.convertToRestId(
+      item.itemId, Office.MailboxEnums.RestVersion.v2_0
+    );
+    const subject = item.subject || "(sans objet)";
+    let fromAddress = "", fromName = "";
+    if (item.from) { fromAddress = item.from.emailAddress || ""; fromName = item.from.displayName || ""; }
+    const conversationId = item.conversationId || null;
+    resolve({ restId, subject, fromAddress, fromName, conversationId, parentFolderId: null });
+  });
+}
+
+// ====== Chargement de l'arborescence des dossiers ======
+// On parcourt récursivement avec $expand=childFolders pour limiter les appels.
+async function loadAllFolders() {
+  const result = [];
+  async function walk(parentPath, fetchUrl) {
+    const data = await graph("GET", fetchUrl);
+    const items = (data.value || []);
+    for (const f of items) {
+      if (f.isHidden) continue;
+      const path = parentPath ? (parentPath + " / " + f.displayName) : f.displayName;
+      result.push({ id: f.id, name: f.displayName, path });
+      if (f.childFolderCount && f.childFolderCount > 0) {
+        await walk(path, "/me/mailFolders/" + f.id + "/childFolders?$top=200&$select=id,displayName,childFolderCount,isHidden");
+      }
+    }
+  }
+  await walk("", "/me/mailFolders?$top=200&$select=id,displayName,childFolderCount,isHidden");
+  result.sort((a, b) => a.path.localeCompare(b.path, "fr"));
+  return result;
+}
+
+// ====== Apprentissage (roamingSettings) ======
+function loadLearnModel() {
+  try {
+    const raw = Office.context.roamingSettings.get("bcfLearnModel");
+    if (raw && typeof raw === "object") learnModel = Object.assign(learnModel, raw);
+  } catch (_) {}
+}
+function saveLearnModel() {
+  try {
+    Office.context.roamingSettings.set("bcfLearnModel", learnModel);
+    Office.context.roamingSettings.saveAsync(() => {});
+  } catch (_) {}
+}
+
+// ====== Moteur de suggestion (règles pondérées par historique) ======
+function computeSuggestions(message) {
+  const scores = {}; // folderName -> score
+  const add = (name, pts) => { if (name) scores[name] = (scores[name] || 0) + pts; };
+
+  // 1) Historique par expéditeur exact
+  const sender = (message.fromAddress || "").toLowerCase();
+  if (sender && learnModel.bySender[sender]) {
+    for (const [folder, count] of Object.entries(learnModel.bySender[sender])) add(folder, count * 10);
+  }
+  // 2) Historique par domaine
+  const domain = sender.split("@")[1] || "";
+  if (domain) {
+    for (const [s, folders] of Object.entries(learnModel.bySender)) {
+      if (s.endsWith("@" + domain)) {
+        for (const [folder, count] of Object.entries(folders)) add(folder, count * 3);
+      }
+    }
+  }
+  // 3) Correspondance de mots de l'objet avec un nom de dossier
+  const subjectWords = (message.subject || "").toLowerCase().split(/[^a-zà-ÿ0-9]+/).filter(w => w.length >= 4);
+  for (const f of allFolders) {
+    const fname = f.name.toLowerCase();
+    for (const w of subjectWords) if (fname.includes(w)) add(f.path, 2);
+  }
+
+  // Normaliser en pourcentages indicatifs
+  const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  if (entries.length === 0) return [];
+  const max = entries[0][1];
+  return entries.map(([name, sc]) => ({
+    name,
+    score: Math.max(35, Math.min(98, Math.round((sc / max) * 95)))
+  }));
+}
+
+// ====== Rendu ======
+function folderIcon() {
   return '<svg class="folder-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 }
-function chevronSvg() {
+function chevron() {
   return '<svg class="chevron" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>';
 }
-function shortName(full) {
-  const parts = full.split(" / ");
-  return parts[parts.length - 1];
-}
+function shortName(path) { const p = path.split(" / "); return p[p.length - 1]; }
 
-/* ====================== RENDU DE L'INTERFACE ====================== */
-function makeFolderButton(name, score) {
+function makeFolderButton(path, score) {
   const btn = document.createElement("button");
   btn.className = "folder-btn";
   const left = document.createElement("span");
   left.className = "folder-left";
-  left.innerHTML = folderIconSvg() + '<span class="folder-name"></span>';
-  left.querySelector(".folder-name").textContent = name;
+  left.innerHTML = folderIcon() + '<span class="folder-name"></span>';
+  left.querySelector(".folder-name").textContent = path;
   btn.appendChild(left);
   if (typeof score === "number") {
-    const s = document.createElement("span");
-    s.className = "score";
-    s.textContent = score + "%";
-    btn.appendChild(s);
+    const s = document.createElement("span"); s.className = "score"; s.textContent = score + "%"; btn.appendChild(s);
   } else {
-    btn.insertAdjacentHTML("beforeend", chevronSvg());
+    btn.insertAdjacentHTML("beforeend", chevron());
   }
-  btn.addEventListener("click", () => fileInto(name));
+  btn.addEventListener("click", () => fileInto(path));
   return btn;
 }
 
 function renderMessage() {
-  const m = DataSource.currentMessage();
-  document.getElementById("msgSubject").textContent = m.subject;
-  document.getElementById("msgFrom").textContent = "de : " + m.from;
+  const subj = document.getElementById("msgSubject");
+  const from = document.getElementById("msgFrom");
+  if (currentMessage) {
+    subj.textContent = currentMessage.subject;
+    from.textContent = "de : " + (currentMessage.fromName || currentMessage.fromAddress || "—");
+  } else {
+    subj.textContent = "Aucun message sélectionné";
+    from.textContent = "Sélectionnez un message pour le classer.";
+  }
 }
 
 function renderSuggestions() {
   const box = document.getElementById("suggestions");
   box.innerHTML = "";
-  const sugg = computeSuggestions(DataSource.currentMessage(), DataSource.listFolders());
+  if (!currentMessage) return;
+  const sugg = computeSuggestions(currentMessage);
+  if (sugg.length === 0) {
+    box.innerHTML = '<p class="empty-hint">Pas encore de suggestion (l\'apprentissage se construit à mesure que vous classez). Utilisez la recherche ci-dessous.</p>';
+    return;
+  }
   sugg.forEach(s => box.appendChild(makeFolderButton(s.name, s.score)));
 }
 
 function renderFavorites() {
   const box = document.getElementById("favs");
+  if (!box) return;
   box.innerHTML = "";
-  DataSource.listFavorites().forEach(f => {
+  const favs = (learnModel.favorites || []).slice(0, 8);
+  if (favs.length === 0) { box.innerHTML = '<p class="empty-hint">Vos dossiers les plus utilisés apparaîtront ici.</p>'; return; }
+  favs.forEach(path => {
     const chip = document.createElement("button");
-    chip.className = "chip";
-    chip.textContent = shortName(f);
-    chip.title = f;
-    chip.addEventListener("click", () => fileInto(f));
+    chip.className = "chip"; chip.textContent = shortName(path); chip.title = path;
+    chip.addEventListener("click", () => fileInto(path));
     box.appendChild(chip);
   });
 }
 
-function setupSearch() {
-  const input = document.getElementById("search");
+function onSearchInput() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
   const results = document.getElementById("results");
-  const folders = DataSource.listFolders();
+  results.innerHTML = "";
+  if (!q) return;
+  const matches = allFolders.filter(f => f.path.toLowerCase().includes(q)).slice(0, 8);
+  if (matches.length === 0) {
+    results.innerHTML = '<p class="empty-hint">Aucun dossier ne correspond. Vous pouvez en créer un ci-dessous.</p>';
+    return;
+  }
+  matches.forEach(f => results.appendChild(makeFolderButton(f.path, null)));
+}
 
-  input.addEventListener("input", () => {
-    const q = input.value.trim().toLowerCase();
-    results.innerHTML = "";
-    if (!q) return;
-    const matches = folders.filter(f => f.toLowerCase().includes(q)).slice(0, 5);
-    if (matches.length === 0) {
-      results.innerHTML = '<p class="empty-hint">Aucun dossier ne correspond. (En version réelle, vous pourrez en créer un.)</p>';
-      return;
+// ====== Action : classer (déplacement réel) ======
+async function fileInto(folderPath) {
+  if (!currentMessage) return;
+  const target = allFolders.find(f => f.path === folderPath);
+  if (!target) { setStatus("Dossier introuvable : " + folderPath, "err"); return; }
+  setStatus("Classement en cours…", "info");
+  try {
+    // Mémoriser l'origine pour l'undo
+    const fromFolderId = currentMessage.parentFolderId;
+    await graph("POST", "/me/messages/" + currentMessage.restId + "/move", { destinationId: target.id });
+
+    // Apprentissage : incrémente le compteur expéditeur -> dossier
+    const sender = (currentMessage.fromAddress || "").toLowerCase();
+    if (sender) {
+      learnModel.bySender[sender] = learnModel.bySender[sender] || {};
+      learnModel.bySender[sender][target.path] = (learnModel.bySender[sender][target.path] || 0) + 1;
     }
-    matches.forEach(f => results.appendChild(makeFolderButton(f, null)));
-  });
+    // Favoris = dossiers les plus utilisés (recalcul simple)
+    bumpFavorite(target.path);
+    // Historique
+    learnModel.history.unshift({ when: Date.now(), subject: currentMessage.subject, to: target.path });
+    learnModel.history = learnModel.history.slice(0, 200);
+    saveLearnModel();
 
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      const first = results.querySelector(".folder-btn");
-      if (first) first.click();
+    lastAction = { messageRestId: currentMessage.restId, fromFolderId, toFolderName: target.path };
+    showBanner("Classé dans « " + target.path + " »");
+    setStatus("", "info");
+  } catch (e) {
+    setStatus("Échec du classement : " + (e.message || e), "err");
+  }
+}
+
+function bumpFavorite(path) {
+  const counts = {};
+  for (const h of learnModel.history) counts[h.to] = (counts[h.to] || 0) + 1;
+  counts[path] = (counts[path] || 0) + 1;
+  learnModel.favorites = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(e => e[0]).slice(0, 8);
+}
+
+// ====== Annulation ======
+async function doUndo() {
+  if (!lastAction) return;
+  setStatus("Annulation…", "info");
+  try {
+    // Redéplacer vers l'origine si connue, sinon vers la boîte de réception
+    const dest = lastAction.fromFolderId || "inbox";
+    await graph("POST", "/me/messages/" + lastAction.messageRestId + "/move", { destinationId: dest });
+    showBanner("Classement annulé.");
+    lastAction = null;
+    setStatus("", "info");
+    setTimeout(hideBanner, 2000);
+  } catch (e) {
+    setStatus("Échec de l'annulation : " + (e.message || e), "err");
+  }
+}
+
+// ====== Création de dossier ======
+async function onCreateFolder() {
+  const input = document.getElementById("newFolderName");
+  const name = (input.value || "").trim();
+  if (!name) { setStatus("Indiquez un nom de dossier.", "info"); return; }
+  setStatus("Création du dossier…", "info");
+  try {
+    // Crée à la racine de la boîte (niveau supérieur)
+    const created = await graph("POST", "/me/mailFolders", { displayName: name });
+    allFolders.push({ id: created.id, name: created.displayName, path: created.displayName });
+    allFolders.sort((a, b) => a.path.localeCompare(b.path, "fr"));
+    input.value = "";
+    setStatus("Dossier « " + name + " » créé.", "ok");
+    // Propose de classer directement dedans
+    showBanner("Dossier « " + name + " » créé. Cliquez pour classer le message dedans : ");
+  } catch (e) {
+    setStatus("Échec de la création : " + (e.message || e), "err");
+  }
+}
+
+// ====== Démarrage principal ======
+async function start() {
+  const retry = document.getElementById("retryBtn");
+  if (retry) retry.style.display = "none";
+  setStatus("Connexion…", "info");
+  try {
+    await getToken();
+    loadLearnModel();
+
+    setStatus("Lecture du message…", "info");
+    currentMessage = await readSelectedMessage();
+
+    setStatus("Chargement de vos dossiers…", "info");
+    allFolders = await loadAllFolders();
+
+    // Déterminer le dossier parent du message (pour un undo précis)
+    if (currentMessage) {
+      try {
+        const m = await graph("GET", "/me/messages/" + currentMessage.restId + "?$select=parentFolderId");
+        currentMessage.parentFolderId = m.parentFolderId || null;
+      } catch (_) {}
     }
-  });
-}
 
-/* ====================== ACTIONS ====================== */
-function fileInto(folderName) {
-  DataSource.fileMessage(folderName).then(res => {
-    if (res && res.ok) {
-      lastAction = { folder: folderName, previousFolder: res.previousFolder };
-      showStatus("Classé dans « " + folderName + " »");
-    }
-  });
-}
-
-function showStatus(text) {
-  document.getElementById("statusText").textContent = text;
-  document.getElementById("status").classList.add("show");
-}
-function hideStatus() {
-  document.getElementById("status").classList.remove("show");
-}
-
-function setupUndo() {
-  document.getElementById("undoBtn").addEventListener("click", () => {
-    if (!lastAction) return;
-    DataSource.undoMessage(lastAction.previousFolder).then(res => {
-      if (res && res.ok) {
-        showStatus("Classement annulé — message revenu dans « " + lastAction.previousFolder + " »");
-        lastAction = null;
-        setTimeout(hideStatus, 2200);
-      }
-    });
-  });
-}
-
-/* ====================== DÉMARRAGE ====================== */
-function init() {
-  renderMessage();
-  renderSuggestions();
-  renderFavorites();
-  setupSearch();
-  setupUndo();
-}
-
-// Office.onReady garantit que l'hôte Outlook est prêt.
-// En démo, on initialise même si Office n'est pas présent (test navigateur).
-if (typeof Office !== "undefined") {
-  Office.onReady(() => init());
-} else {
-  document.addEventListener("DOMContentLoaded", init);
+    renderMessage();
+    renderSuggestions();
+    renderFavorites();
+    document.getElementById("mainUi").style.display = "block";
+    setStatus(allFolders.length + " dossiers chargés.", "ok");
+    setTimeout(() => setStatus("", "info"), 1500);
+  } catch (e) {
+    setStatus("Problème : " + (e.message || e), "err");
+    if (retry) retry.style.display = "inline-flex";
+  }
 }
